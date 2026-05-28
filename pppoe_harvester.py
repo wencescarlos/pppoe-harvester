@@ -38,6 +38,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -599,12 +600,26 @@ def _version_a_tupla(v: str) -> tuple[int, ...]:
 def auto_actualizar() -> None:
     """Descarga la última versión del repositorio y reemplaza este script si hay actualización."""
     print(C.info("Buscando actualizaciones…"))
-    try:
-        with urllib.request.urlopen(REPO_RAW_URL, timeout=5) as resp:
-            nuevo_codigo = resp.read().decode("utf-8")
-    except Exception:
-        print(C.aviso("No se pudo comprobar actualizaciones (sin conexión)."))
+
+    resultado: list[str] = []
+    error: list[bool] = []
+
+    def _fetch() -> None:
+        try:
+            with urllib.request.urlopen(REPO_RAW_URL, timeout=4) as resp:
+                resultado.append(resp.read().decode("utf-8"))
+        except Exception:
+            error.append(True)
+
+    hilo = threading.Thread(target=_fetch, daemon=True)
+    hilo.start()
+    hilo.join(timeout=5)
+
+    if error or not resultado:
+        print(C.aviso("Sin conexión — omitiendo actualización."))
         return
+
+    nuevo_codigo = resultado[0]
 
     m = re.search(r'^VERSION_APP\s*=\s*["\'](.+?)["\']', nuevo_codigo, re.MULTILINE)
     if not m:
