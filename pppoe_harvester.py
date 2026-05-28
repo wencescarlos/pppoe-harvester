@@ -235,30 +235,16 @@ def crear_interfaz_vlan(padre: str, id_vlan: int) -> str:
     return nombre
 
 
-def esperar_internet(host: str = HOST_PING, logger: Optional[logging.Logger] = None) -> None:
-    """Bloquea hasta que un ping a *host* tenga éxito."""
-    inicio  = datetime.datetime.now()
-    spinner = itertools.cycle(FRAMES_RELOJ)
-    while True:
-        try:
-            subprocess.check_output(
-                ["ping", "-c", "2", "-W", "3", host],
-                stderr=subprocess.DEVNULL
-            )
-            return
-        except subprocess.CalledProcessError:
-            transcurrido = (datetime.datetime.now() - inicio).seconds
-            m, s = divmod(transcurrido, 60)
-            ts = f"{m:02d}:{s:02d}" if m else f"{s:2d}s"
-            print(
-                f"\r{C.BORRAR}  {next(spinner)}  "
-                f"{C.AMARILLO}Esperando conexión a internet…  "
-                f"{C.BLANCO}{ts}{C.RESET}",
-                end="", flush=True
-            )
-            if logger:
-                logger.debug("Esperando conectividad a internet…")
-            time.sleep(1)
+def hay_internet(host: str = HOST_PING) -> bool:
+    """Devuelve True si hay conexión a internet (ping rápido)."""
+    try:
+        subprocess.check_output(
+            ["ping", "-c", "1", "-W", "2", host],
+            stderr=subprocess.DEVNULL
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
 
 
 def terminar_procesos(*nombres: str) -> None:
@@ -286,7 +272,13 @@ def asegurar_repositorio_universe(logger: logging.Logger) -> None:
     fuentes = Path("/etc/apt/sources.list").read_text(encoding="utf-8")
     if "universe" not in fuentes:
         print(C.info('Añadiendo repositorio "universe"…'))
-        esperar_internet(logger=logger)
+        if not hay_internet():
+            raise RuntimeError(
+                "Se necesita internet para instalar dependencias por primera vez.\n"
+                "  Desconecta el cable del router, ejecuta el script una vez para\n"
+                "  instalar todo, y luego conéctalo de nuevo.\n"
+                "  Si las dependencias ya están instaladas usa: --sin-instalacion"
+            )
         subprocess.run(
             ["add-apt-repository", "-y", "universe"],
             check=True, capture_output=True
@@ -694,8 +686,8 @@ def main() -> None:
             instalar_tshark(logger)
             instalar_rp_pppoe(logger)
             configurar_servidor_ppp(logger)
-        except subprocess.CalledProcessError as exc:
-            print(C.error(f"Error durante la instalación de dependencias: {exc}"))
+        except (subprocess.CalledProcessError, RuntimeError) as exc:
+            print(C.error(str(exc)))
             logger.error("Error de instalación: %s", exc)
             sys.exit(1)
 
