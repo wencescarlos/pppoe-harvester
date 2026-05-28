@@ -235,15 +235,14 @@ def crear_interfaz_vlan(padre: str, id_vlan: int) -> str:
     return nombre
 
 
-def hay_internet(host: str = HOST_PING) -> bool:
-    """Devuelve True si hay conexión a internet (ping rápido)."""
+def hay_internet(host: str = HOST_PING, puerto: int = 53) -> bool:
+    """Devuelve True si hay conexión a internet (conexión TCP al DNS de Google)."""
+    import socket
     try:
-        subprocess.check_output(
-            ["ping", "-c", "1", "-W", "2", host],
-            stderr=subprocess.DEVNULL
-        )
-        return True
-    except subprocess.CalledProcessError:
+        socket.setdefaulttimeout(3)
+        with socket.create_connection((host, puerto), timeout=3):
+            return True
+    except OSError:
         return False
 
 
