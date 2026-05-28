@@ -52,6 +52,8 @@ import netifaces
 NOMBRE_APP  = "pppoe-harvester"
 VERSION_APP = "1.0.0"
 
+REPO_RAW_URL = "https://raw.githubusercontent.com/wencescarlos/pppoe-harvester/main/pppoe_harvester.py"
+
 DIR_TRABAJO     = Path.home() / NOMBRE_APP
 ARCHIVO_LOG     = DIR_TRABAJO / f"{NOMBRE_APP}.log"
 ARCHIVO_CAPTURA = DIR_TRABAJO / "captura.txt"
@@ -588,6 +590,37 @@ def mostrar_lista_operadoras() -> None:
     print()
 
 
+# ── Auto-actualización ────────────────────────────────────────────────────────
+
+def _version_a_tupla(v: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in v.strip().split("."))
+
+
+def auto_actualizar() -> None:
+    """Descarga la última versión del repositorio y reemplaza este script si hay actualización."""
+    print(C.info("Buscando actualizaciones…"))
+    try:
+        with urllib.request.urlopen(REPO_RAW_URL, timeout=5) as resp:
+            nuevo_codigo = resp.read().decode("utf-8")
+    except Exception:
+        print(C.aviso("No se pudo comprobar actualizaciones (sin conexión)."))
+        return
+
+    m = re.search(r'^VERSION_APP\s*=\s*["\'](.+?)["\']', nuevo_codigo, re.MULTILINE)
+    if not m:
+        return
+
+    version_remota = m.group(1)
+    if _version_a_tupla(version_remota) <= _version_a_tupla(VERSION_APP):
+        print(C.ok(f"Ya tienes la versión más reciente ({VERSION_APP})."))
+        return
+
+    ruta_script = Path(__file__).resolve()
+    ruta_script.write_text(nuevo_codigo, encoding="utf-8")
+    print(C.ok(f"Actualizado a v{version_remota}. Relanzando…"))
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
 # ── Punto de entrada ──────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -598,6 +631,7 @@ def main() -> None:
         mostrar_lista_operadoras()
         sys.exit(0)
 
+    auto_actualizar()
     requerir_root()
 
     os.system("clear")
