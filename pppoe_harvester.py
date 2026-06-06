@@ -203,12 +203,43 @@ def requerir_root() -> None:
         os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
 
 
+def _es_interfaz_cableada(nombre: str) -> bool:
+    """Devuelve True si la interfaz es Ethernet cableada (no WiFi, no virtual)."""
+    # Excluir interfaces claramente virtuales o inalámbricas por nombre
+    excluir = ("lo", "docker", "veth", "virbr", "br-", "tun", "tap", "wl", "ww")
+    if any(nombre.startswith(p) for p in excluir):
+        return False
+    # En Linux, si existe /sys/class/net/<iface>/wireless es WiFi
+    if Path(f"/sys/class/net/{nombre}/wireless").exists():
+        return False
+    # En Linux, leer el tipo de interfaz: 1 = Ethernet
+    tipo = Path(f"/sys/class/net/{nombre}/type")
+    if tipo.exists():
+        return tipo.read_text().strip() == "1"
+    # Fuera de Linux (macOS) aceptar solo en* y eth* excluyendo WiFi conocidas
+    return nombre.startswith(("eth", "en", "eno", "ens", "enp", "enx"))
+
+
+def _tiene_cable(nombre: str) -> bool:
+    """Devuelve True si la interfaz tiene portadora activa (cable conectado)."""
+    carrier = Path(f"/sys/class/net/{nombre}/carrier")
+    try:
+        return carrier.read_text().strip() == "1"
+    except OSError:
+        return False
+
+
 def detectar_interfaz_ethernet() -> str:
-    """Devuelve la primera interfaz Ethernet encontrada (eth* o en*)."""
-    for interfaz in netifaces.interfaces():
-        if interfaz.startswith(("eth", "en")):
-            return interfaz
-    raise RuntimeError("No se ha detectado ninguna interfaz Ethernet.")
+    """Devuelve la interfaz Ethernet cableada más adecuada, priorizando las que tienen cable."""
+    candidatas = [i for i in netifaces.interfaces() if _es_interfaz_cableada(i)]
+    if not candidatas:
+        raise RuntimeError(
+            "No se ha detectado ninguna interfaz Ethernet cableada.\n"
+            "  Usa --interfaz NOMBRE para especificarla manualmente."
+        )
+    # Preferir las que tienen cable conectado
+    con_cable = [i for i in candidatas if _tiene_cable(i)]
+    return con_cable[0] if con_cable else candidatas[0]
 
 
 def eliminar_interfaces_vlan() -> None:
@@ -312,7 +343,14 @@ def instalar_rp_pppoe(logger: logging.Logger) -> None:
 
     print(C.info(f"Descargando RP-PPPoE desde {URL_RP_PPPOE}…"))
     logger.info("Descargando código fuente de RP-PPPoE.")
-    urllib.request.urlretrieve(URL_RP_PPPOE, ruta_archivo)
+    try:
+        urllib.request.urlretrieve(URL_RP_PPPOE, ruta_archivo)
+    except Exception as exc:
+        raise RuntimeError(
+            "No se pudo descargar RP-PPPoE. Comprueba la conexión a internet.\n"
+            f"  URL: {URL_RP_PPPOE}\n"
+            f"  Detalle: {exc}"
+        ) from exc
 
     if not dir_fuentes.exists():
         print(C.info("Descomprimiendo archivo…"))
@@ -369,8 +407,8 @@ def capturar_credenciales(
     logger: logging.Logger,
 ) -> CredencialesPPPoE:
     """
-    Lanza pppoe-server y tshark, luego analiza el archivo de captura hasta
-    encontrar credenciales PAP. Devuelve una instancia de CredencialesPPPoE.
+    Lanza pppoe-server y tshark, luego analiza la salida en tiempo real
+    buscando credenciales PAP. Devuelve una instancia de CredencialesPPPoE.
     """
     ARCHIVO_CAPTURA.unlink(missing_ok=True)
 
@@ -382,16 +420,19 @@ def capturar_credenciales(
         stderr=subprocess.DEVNULL,
     )
 
+    # Abrir el archivo antes de lanzar tshark y mantenerlo abierto
+    # para que el descriptor siga vivo mientras tshark escribe en él.
     logger.info("Iniciando captura con tshark en %s.", interfaz_vlan)
-    with ARCHIVO_CAPTURA.open("wb") as salida_captura:
-        proceso_tshark = subprocess.Popen(
-            ["tshark", "-i", interfaz_vlan, "-T", "text"],
-            stdout=salida_captura,
-            stderr=subprocess.DEVNULL,
-        )
+    salida_captura = ARCHIVO_CAPTURA.open("wb")
+    proceso_tshark = subprocess.Popen(
+        ["tshark", "-i", interfaz_vlan, "-T", "text"],
+        stdout=salida_captura,
+        stderr=subprocess.DEVNULL,
+    )
 
     inicio  = datetime.datetime.now()
     spinner = itertools.cycle(FRAMES_RELOJ)
+    lineas_vistas = 0
 
     print(C.aviso("Puedes detener el proceso en cualquier momento pulsando Ctrl+C.\n"))
 
@@ -408,16 +449,20 @@ def capturar_credenciales(
             )
 
             try:
-                texto = ARCHIVO_CAPTURA.read_text(encoding="utf-8", errors="replace")
+                lineas = ARCHIVO_CAPTURA.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError:
                 time.sleep(0.1)
                 continue
 
-            for linea in texto.splitlines():
+            # Solo procesar líneas nuevas desde la última iteración
+            nuevas = lineas[lineas_vistas:]
+            lineas_vistas = len(lineas)
+
+            for linea in nuevas:
                 usuario, clave = _extraer_credenciales(linea)
                 if usuario and clave:
                     logger.info("Credenciales capturadas: usuario=%s", usuario)
-                    _registrar_paquetes_capturados(logger)
+                    logger.info("Total de paquetes capturados: %d", len(lineas))
                     return CredencialesPPPoE(
                         usuario=usuario,
                         contrasena=clave,
@@ -429,22 +474,14 @@ def capturar_credenciales(
     except KeyboardInterrupt:
         print(f"\n{C.aviso('Proceso interrumpido por el usuario.')}\n")
         logger.info("Proceso interrumpido por el usuario.")
-        _registrar_paquetes_capturados(logger)
+        logger.info("Total de paquetes capturados: %d", lineas_vistas)
         _mostrar_log()
         sys.exit(0)
     finally:
+        salida_captura.close()
         proceso_pppoe.terminate()
         proceso_tshark.terminate()
         terminar_procesos("tshark", "pppoe-server")
-
-
-def _registrar_paquetes_capturados(logger: logging.Logger) -> None:
-    """Anota en el log el número total de paquetes capturados."""
-    try:
-        lineas = ARCHIVO_CAPTURA.read_text(encoding="utf-8", errors="replace").splitlines()
-        logger.info("Total de paquetes capturados: %d", len(lineas))
-    except OSError:
-        pass
 
 
 def _mostrar_log() -> None:
