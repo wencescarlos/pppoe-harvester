@@ -235,17 +235,6 @@ def crear_interfaz_vlan(padre: str, id_vlan: int) -> str:
     return nombre
 
 
-def hay_internet(host: str = HOST_PING, puerto: int = 53) -> bool:
-    """Devuelve True si hay conexión a internet (conexión TCP al DNS de Google)."""
-    import socket
-    try:
-        socket.setdefaulttimeout(3)
-        with socket.create_connection((host, puerto), timeout=3):
-            return True
-    except OSError:
-        return False
-
-
 def terminar_procesos(*nombres: str) -> None:
     """Envía señal de terminación a los procesos indicados y espera su cierre."""
     for nombre in nombres:
@@ -271,17 +260,18 @@ def asegurar_repositorio_universe(logger: logging.Logger) -> None:
     fuentes = Path("/etc/apt/sources.list").read_text(encoding="utf-8")
     if "universe" not in fuentes:
         print(C.info('Añadiendo repositorio "universe"…'))
-        if not hay_internet():
-            raise RuntimeError(
-                "Se necesita internet para instalar dependencias por primera vez.\n"
-                "  Desconecta el cable del router, ejecuta el script una vez para\n"
-                "  instalar todo, y luego conéctalo de nuevo.\n"
-                "  Si las dependencias ya están instaladas usa: --sin-instalacion"
+        try:
+            subprocess.run(
+                ["add-apt-repository", "-y", "universe"],
+                check=True, capture_output=True, timeout=30
             )
-        subprocess.run(
-            ["add-apt-repository", "-y", "universe"],
-            check=True, capture_output=True
-        )
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(
+                "No se pudo añadir el repositorio 'universe'.\n"
+                "  Asegúrate de tener conexión a internet y vuelve a intentarlo.\n"
+                f"  Si las dependencias ya están instaladas usa: --sin-instalacion\n"
+                f"  Detalle: {exc.stderr.decode(errors='replace').strip()}"
+            ) from exc
         logger.info('Repositorio "universe" añadido.')
     else:
         logger.debug('El repositorio "universe" ya estaba presente.')
