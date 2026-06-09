@@ -77,6 +77,34 @@ Para cualquier otro ISP usa `--vlan ID` con el número de VLAN de tu operadora.
 
 ---
 
+## Solución de problemas
+
+- **Se queda en "Esperando conexión a internet" o falla al instalar**
+  Las dependencias se instalan solo la primera vez y necesitan internet.
+  Hazlo con el WiFi conectado y **sin** el cable del router. Si ya están
+  instaladas, usa `--sin-instalacion`.
+
+- **No detecta la interfaz Ethernet correcta**
+  Especifícala a mano con `--interfaz` (por ejemplo `--interfaz enp3s0`).
+  El script prioriza la interfaz cableada que tenga cable conectado.
+
+- **No aparecen las credenciales**
+  Asegúrate de haber elegido la VLAN correcta de tu operadora y de que el
+  router esté conectado al puerto Ethernet del portátil y encendido.
+
+El log completo de cada sesión se guarda en
+`~/pppoe-harvester/pppoe-harvester.log`.
+
+---
+
+## Aviso
+
+Úsala únicamente en tu propio equipo y red, para recuperar las
+credenciales de tu propia línea. El script requiere root y modifica
+`/etc/ppp/options` y `/etc/ppp/pap-secrets`.
+
+---
+
 ## Licencia
 
 MIT
