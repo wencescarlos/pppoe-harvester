@@ -243,9 +243,9 @@ def detectar_interfaz_ethernet() -> str:
 
 
 def eliminar_interfaces_vlan() -> None:
-    """Elimina todas las interfaces virtuales con notación de punto (p.ej. eth0.20)."""
+    """Elimina solo las subinterfaces VLAN creadas por esta herramienta (pppoe.*)."""
     for interfaz in netifaces.interfaces():
-        if "." in interfaz:
+        if interfaz.startswith("pppoe."):
             subprocess.run(
                 ["ip", "link", "delete", interfaz],
                 check=False, capture_output=True
@@ -378,7 +378,7 @@ def configurar_servidor_ppp(logger: logging.Logger) -> None:
     PPP_OPCIONES.write_text(CONTENIDO_PPP_OPCIONES, encoding="utf-8")
     logger.info("Archivo de opciones PPP escrito.")
 
-    secretos = PAP_SECRETOS.read_text(encoding="utf-8")
+    secretos = PAP_SECRETOS.read_text(encoding="utf-8") if PAP_SECRETOS.exists() else ""
     if LINEA_PAP_TEMPORAL not in secretos:
         with PAP_SECRETOS.open("a", encoding="utf-8") as f:
             f.write(LINEA_PAP_TEMPORAL)
@@ -425,7 +425,7 @@ def capturar_credenciales(
     logger.info("Iniciando captura con tshark en %s.", interfaz_vlan)
     salida_captura = ARCHIVO_CAPTURA.open("wb")
     proceso_tshark = subprocess.Popen(
-        ["tshark", "-i", interfaz_vlan, "-T", "text"],
+        ["tshark", "-l", "-i", interfaz_vlan, "-T", "text"],
         stdout=salida_captura,
         stderr=subprocess.DEVNULL,
     )
