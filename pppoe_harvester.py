@@ -54,6 +54,7 @@ NOMBRE_APP  = "pppoe-harvester"
 VERSION_APP = "1.0.0"
 
 REPO_RAW_URL = "https://raw.githubusercontent.com/wencescarlos/pppoe-harvester/main/pppoe_harvester.py"
+MARCA_SIN_UPDATE = "_PPPOE_SIN_UPDATE"  # marcador para no repetir la auto-actualización tras relanzar
 
 DIR_TRABAJO     = Path.home() / NOMBRE_APP
 ARCHIVO_LOG     = DIR_TRABAJO / f"{NOMBRE_APP}.log"
@@ -200,6 +201,11 @@ def requerir_root() -> None:
     """Relanza el script con sudo si no se ejecuta como root."""
     if os.geteuid() != 0:
         print(C.aviso("Se requieren privilegios de superusuario — relanzando con sudo…"))
+        # Preservar el marcador para no volver a comprobar actualizaciones tras el sudo.
+        env = "env" if os.environ.get(MARCA_SIN_UPDATE) else None
+        if env:
+            os.execvp("sudo", ["sudo", "env", f"{MARCA_SIN_UPDATE}=1",
+                                sys.executable] + sys.argv)
         os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
 
 
@@ -617,6 +623,11 @@ def _version_a_tupla(v: str) -> tuple[int, ...]:
 
 def auto_actualizar() -> None:
     """Descarga la última versión del repositorio y reemplaza este script si hay actualización."""
+    # Si ya se comprobó en este arranque (antes de relanzar con sudo), no repetir.
+    if os.environ.get(MARCA_SIN_UPDATE):
+        return
+    os.environ[MARCA_SIN_UPDATE] = "1"
+
     print(C.info("Buscando actualizaciones…"))
 
     resultado: list[str] = []
